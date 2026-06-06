@@ -1,4 +1,7 @@
-from .backend.memory import Database, Table
+"""TUI для системы управления базой данных."""
+
+from .backend.memory import Database, Table, MemoryDatabase
+from .backend.file import FileDatabase
 from .backend.errors import (
     DatabaseError,
     TableNotFoundError,
@@ -6,13 +9,35 @@ from .backend.errors import (
     RecordNotFoundError,
     ColumnNotFoundError,
     InvalidDataError,
+    InvalidStorageDataError,
 )
 
 
 class TUI:
-    def __init__(self):
-        self.db = Database()
+    def __init__(self, db: Database | None = None):
+        if db is None:
+            db = self._choose_backend()
+        self.db = db
         self.running = True
+
+    def _choose_backend(self) -> Database:
+        print("\n" + "=" * 50)
+        print("         ВЫБОР ТИПА БАЗЫ ДАННЫХ")
+        print("=" * 50)
+        print("1. In-memory (данные не сохраняются между запусками)")
+        print("2. File (данные сохраняются в каталог data/)")
+        print("=" * 50)
+
+        while True:
+            choice = input("Выберите тип БД (1/2): ").strip()
+            if choice == "1":
+                self._print_success("Выбрана in-memory база данных.")
+                return MemoryDatabase()
+            if choice == "2":
+                directory = input("Каталог для хранения [data]: ").strip() or "data"
+                self._print_success(f"Выбрана файловая БД (каталог: {directory}).")
+                return FileDatabase(directory)
+            self._print_error("Введите 1 или 2.")
 
     def _read_int(self, prompt: str) -> int:
         while True:
@@ -147,6 +172,8 @@ class TUI:
         except DuplicateIDError as e:
             self._print_error(str(e))
         except InvalidDataError as e:
+            self._print_error(str(e))
+        except InvalidStorageDataError as e:
             self._print_error(str(e))
         except DatabaseError as e:
             self._print_error(str(e))
