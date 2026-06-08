@@ -3,7 +3,11 @@
 from abc import ABC, abstractmethod
 from typing import Any
 
-from .errors import TableAlreadyExistsError, TableNotFoundError
+from .errors import (
+    InvalidStorageDataError,
+    TableAlreadyExistsError,
+    TableNotFoundError,
+)
 from .table import Table
 
 
@@ -31,7 +35,13 @@ class Database(ABC):
         return self._load_table(table_name)
 
     def get_tables(self) -> dict[str, Table]:
-        return {name: self._load_table(name) for name in self._list_table_names()}
+        result: dict[str, Table] = {}
+        for name in self._list_table_names():
+            try:
+                result[name] = self._load_table(name)
+            except InvalidStorageDataError:
+                continue
+        return result
 
     def insert_record(
         self, table_name: str, record: dict[str, Any]

@@ -1,6 +1,6 @@
 """TUI для системы управления базой данных."""
 
-from .backend.memory import Database, Table, MemoryDatabase
+from .backend.memory import Database, MemoryDatabase
 from .backend.file import FileDatabase
 from .backend.errors import (
     DatabaseError,
@@ -46,13 +46,6 @@ class TUI:
                 return int(raw)
             except ValueError:
                 self._print_error("Ошибка: введите целое число.")
-
-    def _read_positive_int(self, prompt: str) -> int:
-        while True:
-            value = self._read_int(prompt)
-            if value > 0:
-                return value
-            self._print_error("Ошибка: введите число больше 0.")
 
     def _try_convert(self, value: str):
         """Попытаться преобразовать строку в int, float или оставить строкой."""
@@ -110,7 +103,7 @@ class TUI:
 
             records = table.get_records()
             if records:
-                print(f"\n Пример записи:")
+                print("\n Пример записи:")
                 print(f"   {records[0]}")
         except TableNotFoundError as e:
             self._print_error(str(e))
@@ -184,8 +177,6 @@ class TUI:
         table_name = input("Введите имя таблицы: ").strip()
 
         try:
-            table = self.db.get_table(table_name)
-
             use_filters = input("Добавить фильтры? (y/n): ").strip().lower()
             filters = {}
 
@@ -224,7 +215,7 @@ class TUI:
             table = self.db.get_table(table_name)
             record_id = self._read_int("Введите ID записи для обновления: ")
 
-            self._print_info(f"Введите поля для обновления (пустая строка для завершения):")
+            self._print_info("Введите поля для обновления (пустая строка для завершения):")
             updates = {}
 
             for column in table.get_columns():
@@ -258,7 +249,6 @@ class TUI:
         table_name = input("Введите имя таблицы: ").strip()
 
         try:
-            table = self.db.get_table(table_name)
             record_id = self._read_int("Введите ID записи для удаления: ")
 
             confirm = input(f"Вы уверены, что хотите удалить запись с ID {record_id}? (y/n): ").strip().lower()

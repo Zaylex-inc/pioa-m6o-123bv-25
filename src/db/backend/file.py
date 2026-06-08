@@ -1,21 +1,24 @@
 """Файловая реализация базы данных. Хранит таблицы в JSON-файлах."""
 
 import json
+import re
 from pathlib import Path
 from typing import Any
 
 from .database import Database
-from .errors import InvalidStorageDataError, TableNotFoundError
+from .errors import InvalidDataError, InvalidStorageDataError, TableNotFoundError
 from .table import Table
+
+
+_VALID_TABLE_NAME = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 
 
 class FileDatabase(Database):
     """База данных, которая хранит каждую таблицу в отдельном JSON-файле."""
 
     def __init__(self, directory: str = "data") -> None:
-        self._directory = Path(directory)
+        self._directory = Path(directory).resolve()
         self._directory.mkdir(parents=True, exist_ok=True)
-
 
     def _table_exists(self, table_name: str) -> bool:
         return self._get_table_path(table_name).exists()
@@ -54,11 +57,25 @@ class FileDatabase(Database):
         self._get_table_path(table_name).unlink()
 
     def _list_table_names(self) -> list[str]:
-        return sorted(p.stem for p in self._directory.glob("*.json") if p.is_file())
-
+        return sorted(
+            p.stem
+            for p in self._directory.glob("*.json")
+            if p.is_file() and _VALID_TABLE_NAME.match(p.stem)
+        )
 
     def _get_table_path(self, table_name: str) -> Path:
-        return self._directory / f"{table_name}.json"
+        if not isinstance(table_name, str) or not _VALID_TABLE_NAME.match(table_name):
+            raise InvalidDataError(
+                f"Недопустимое имя таблицы '{table_name}'. "
+                "Разрешены латинские буквы, цифры, '_' и '-', длина 1..64."
+            )
+
+        path = (self._directory / f"{table_name}.json").resolve()
+        if path.parent != self._directory:
+            raise InvalidDataError(
+                f"Имя таблицы '{table_name}' выводит путь за пределы каталога хранилища."
+            )
+        return path
 
     def _serialize_table(self, table: Table) -> dict[str, Any]:
         return {
@@ -81,6 +98,13 @@ class FileDatabase(Database):
                 f"Файл таблицы '{table_name}': 'columns' и 'records' "
                 "должны быть списками."
             )
+
+        for index, column in enumerate(data["columns"]):
+            if not isinstance(column, str) or not column:
+                raise InvalidStorageDataError(
+                    f"Файл таблицы '{table_name}': имя колонки с индексом "
+                    f"{index} должно быть непустой строкой (получено: {column!r})."
+                )
 
         columns = tuple(data["columns"])
         table = Table(table_name, columns)
