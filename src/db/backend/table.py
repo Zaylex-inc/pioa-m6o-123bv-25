@@ -55,7 +55,7 @@ class Table:
                     f"Поле '{column}' не определено в структуре таблицы."
                 )
 
-        if self.select_records(id=record_id):
+        if any(r["id"] == record_id for r in self._records):
             raise DuplicateIDError(f"Запись с id={record_id} уже существует.")
 
         saved_record = deepcopy(record)
@@ -81,6 +81,11 @@ class Table:
     def update_record(self, record_id: int, **updates: Any) -> dict[str, Any]:
         if isinstance(record_id, bool) or not isinstance(record_id, int):
             raise InvalidDataError("Тип поля id должен быть int.")
+
+        if "id" in updates:
+            raise InvalidDataError(
+                "Поле 'id' нельзя изменять через update_record."
+            )
 
         for key in updates:
             if key not in self._columns:
@@ -121,7 +126,8 @@ class Table:
                 key=lambda x: (x.get(field) is None, x.get(field)),
                 reverse=descending,
             )
-        except TypeError:
+        except TypeError as error:
             raise InvalidDataError(
-                f"Невозможно сортировать поле '{field}' — содержит несравнимые типы данных."
-            )
+                f"Невозможно сортировать поле '{field}' — "
+                "содержит несравнимые типы данных."
+            ) from error

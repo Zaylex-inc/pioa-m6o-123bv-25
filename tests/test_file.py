@@ -1,10 +1,12 @@
 """Тесты модуля file.py (FileDatabase)."""
 
 import json
+import logging
 import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from src.db.backend.errors import (
     ColumnNotFoundError,
@@ -44,6 +46,7 @@ class FileDatabaseTestCase(unittest.TestCase):
 # Инициализация
 # ---------------------------------------------------------------------------
 
+
 class TestFileDatabaseInit(FileDatabaseTestCase):
     """Инициализация и создание каталога."""
 
@@ -74,6 +77,7 @@ class TestFileDatabaseInit(FileDatabaseTestCase):
 # ---------------------------------------------------------------------------
 # Таблицы
 # ---------------------------------------------------------------------------
+
 
 class TestFileDatabaseTables(FileDatabaseTestCase):
     """Создание, удаление, поиск таблиц."""
@@ -165,6 +169,7 @@ class TestFileDatabaseTables(FileDatabaseTestCase):
 # ---------------------------------------------------------------------------
 # Записи — проверка персистентности после каждой операции
 # ---------------------------------------------------------------------------
+
 
 class TestFileDatabaseRecords(FileDatabaseTestCase):
     """Операции над записями + проверка, что данные пишутся на диск."""
@@ -262,6 +267,7 @@ class TestFileDatabaseRecords(FileDatabaseTestCase):
 # Персистентность между экземплярами
 # ---------------------------------------------------------------------------
 
+
 class TestFileDatabasePersistence(FileDatabaseTestCase):
     """Данные действительно переживают пересоздание объекта БД."""
 
@@ -307,6 +313,7 @@ class TestFileDatabasePersistence(FileDatabaseTestCase):
 # ---------------------------------------------------------------------------
 # Повреждённые файлы хранилища
 # ---------------------------------------------------------------------------
+
 
 class TestFileDatabaseCorruptedFiles(FileDatabaseTestCase):
     """Обработка повреждённых файлов хранилища."""
@@ -392,10 +399,7 @@ class TestFileDatabaseCorruptedFiles(FileDatabaseTestCase):
             self.db.get_table("broken")
 
     def test_corrupted_file_does_not_break_listing(self):
-        """Битый файл лежит в каталоге — get_tables не должен падать.
-
-        get_tables пропускает битые файлы и возвращает только валидные таблицы.
-        """
+        """Битый файл лежит в каталоге — get_tables не должен падать."""
         self.db.create_table("good", ("id",))
         self._write_raw("broken", "{ not json")
         tables = self.db.get_tables()
@@ -413,10 +417,171 @@ class TestFileDatabaseCorruptedFiles(FileDatabaseTestCase):
         self.assertIn("posts", tables)
         self.assertNotIn("broken", tables)
 
+    def test_listing_logs_warning_for_corrupted(self):
+        """При пропуске битой таблицы в лог пишется warning с её именем."""
+        self.db.create_table("good", ("id",))
+        self._write_raw("broken", "{ not json")
+        with self.assertLogs("src.db.backend.database", level="WARNING") as cm:
+            self.db.get_tables()
+        self.assertTrue(
+            any("broken" in msg for msg in cm.output),
+            f"Имя повреждённой таблицы не упомянуто в логе: {cm.output}",
+        )
+    
+    def test_duplicate_id_in_file_treated_as_corrupted(self):
+        self._write_raw(
+            "broken",
+            json.dumps({
+                "columns": ["id", "name"],
+                "records": [
+                    {"id": 1, "name": "A"},
+                    {"id": 1, "name": "B"},
+                ],
+            }),
+        )
+        with self.assertRaises(InvalidStorageDataError):
+            self.db.get_table("broken")
+
+    def test_extra_column_in_file_treated_as_corrupted(self):
+        self._write_raw(
+            "broken",
+            json.dumps({
+                "columns": ["id", "name"],
+                "records": [{"id": 1, "name": "A", "extra": 42}],
+            }),
+        )
+        with self.assertRaises(InvalidStorageDataError):
+            self.db.get_table("broken")
+
+    def test_invalid_id_type_in_file_treated_as_corrupted(self):
+        self._write_raw(
+            "broken",
+            json.dumps({
+                "columns": ["id", "name"],
+                "records": [{"id": "not-int", "name": "A"}],
+            }),
+        )
+        with self.assertRaises(InvalidStorageDataError):
+            self.db.get_table("broken")
+
+    def test_missing_field_in_record_treated_as_corrupted(self):
+        self._write_raw(
+            "broken",
+            json.dumps({
+                "columns": ["id", "name", "age"],
+                "records": [{"id": 1, "name": "A"}],
+            }),
+        )
+        with self.assertRaises(InvalidStorageDataError):
+            self.db.get_table("broken")
+
+    def test_id_not_first_column_in_file_treated_as_corrupted(self):
+        self._write_raw(
+            "broken",
+            json.dumps({
+                "columns": ["name", "id"],
+                "records": [],
+            }),
+        )
+        with self.assertRaises(InvalidStorageDataError):
+            self.db.get_table("broken")
+
+
+    def test_listing_does_not_log_when_all_valid(self):
+        """Если битых таблиц нет — warning не пишется."""
+        self.db.create_table("a", ("id",))
+        self.db.create_table("b", ("id",))
+
+        records: list[logging.LogRecord] = []
+
+        class _Capture(logging.Handler):
+            def emit(self, record):
+                records.append(record)
+
+        handler = _Capture(level=logging.WARNING)
+        logger = logging.getLogger("src.db.backend.database")
+        logger.addHandler(handler)
+        try:
+            self.db.get_tables()
+        finally:
+            logger.removeHandler(handler)
+
+        self.assertEqual(records, [])
+
+
+# ---------------------------------------------------------------------------
+# Информация о повреждённых таблицах
+# ---------------------------------------------------------------------------
+
+
+class TestFileDatabaseCorruptedReporting(FileDatabaseTestCase):
+    """get_corrupted_tables: программный доступ к списку битых таблиц."""
+
+    def test_returns_empty_when_all_valid(self):
+        self.db.create_table("a", ("id",))
+        self.db.create_table("b", ("id",))
+        self.assertEqual(self.db.get_corrupted_tables(), {})
+
+    def test_returns_empty_on_empty_directory(self):
+        self.assertEqual(self.db.get_corrupted_tables(), {})
+
+    def test_reports_single_corrupted(self):
+        self.db.create_table("good", ("id",))
+        self._write_raw("broken", "{ not json")
+        corrupted = self.db.get_corrupted_tables()
+        self.assertEqual(set(corrupted.keys()), {"broken"})
+        self.assertTrue(corrupted["broken"])  # сообщение не пустое
+
+    def test_reports_multiple_corrupted(self):
+        self.db.create_table("good", ("id",))
+        self._write_raw("broken1", "{ not json")
+        self._write_raw(
+            "broken2",
+            json.dumps({"columns": "id", "records": []}),
+        )
+        self._write_raw(
+            "broken3",
+            json.dumps({"columns": ["id"], "records": {}}),
+        )
+        corrupted = self.db.get_corrupted_tables()
+        self.assertEqual(set(corrupted.keys()), {"broken1", "broken2", "broken3"})
+        for name, message in corrupted.items():
+            with self.subTest(name=name):
+                self.assertIsInstance(message, str)
+                self.assertTrue(message)
+
+    def test_corrupted_and_get_tables_are_disjoint(self):
+        """Имя таблицы не может одновременно быть и валидным, и битым."""
+        self.db.create_table("good", ("id",))
+        self._write_raw("broken", "{ not json")
+        valid = set(self.db.get_tables().keys())
+        corrupted = set(self.db.get_corrupted_tables().keys())
+        self.assertEqual(valid & corrupted, set())
+        self.assertEqual(valid, {"good"})
+        self.assertEqual(corrupted, {"broken"})
+    def test_semantic_errors_reported_as_corrupted(self):
+        """Файлы с дублирующимися id / лишними колонками — тоже в corrupted."""
+        self.db.create_table("good", ("id",))
+        self._write_raw(
+            "dup_id",
+            json.dumps({
+                "columns": ["id", "name"],
+                "records": [
+                    {"id": 1, "name": "A"},
+                    {"id": 1, "name": "B"},
+                ],
+            }),
+        )
+        corrupted = self.db.get_corrupted_tables()
+        self.assertIn("dup_id", corrupted)
+        self.assertNotIn("dup_id", self.db.get_tables())
+
+
 
 # ---------------------------------------------------------------------------
 # Path traversal — валидация имени таблицы
 # ---------------------------------------------------------------------------
+
 
 class TestFileDatabasePathTraversal(FileDatabaseTestCase):
     """Имя таблицы не должно позволять выйти за пределы каталога."""
@@ -457,6 +622,41 @@ class TestFileDatabasePathTraversal(FileDatabaseTestCase):
                 self.db.create_table(name, ("id",))
                 self.assertTrue(self.db.has_table(name))
                 self.db.drop_table(name)
+
+
+# ---------------------------------------------------------------------------
+# Обработка OSError при удалении файла таблицы
+# ---------------------------------------------------------------------------
+
+
+class TestFileDatabaseDeleteErrors(FileDatabaseTestCase):
+    """_delete_table_storage оборачивает OSError в InvalidStorageDataError."""
+
+    def test_unlink_permission_error_wrapped(self):
+        self.db.create_table("users", ("id", "name"))
+        with patch.object(Path, "unlink", side_effect=PermissionError("denied")):
+            with self.assertRaises(InvalidStorageDataError) as ctx:
+                self.db.drop_table("users")
+        self.assertIn("users", str(ctx.exception))
+        self.assertIn("удалить", str(ctx.exception).lower())
+
+    def test_unlink_os_error_wrapped(self):
+        self.db.create_table("users", ("id", "name"))
+        with patch.object(Path, "unlink", side_effect=OSError("disk error")):
+            with self.assertRaises(InvalidStorageDataError):
+                self.db.drop_table("users")
+
+    def test_unlink_error_preserves_cause(self):
+        """Исходное исключение должно сохраняться в __cause__."""
+        self.db.create_table("users", ("id", "name"))
+        original = PermissionError("denied")
+        with patch.object(Path, "unlink", side_effect=original):
+            try:
+                self.db.drop_table("users")
+            except InvalidStorageDataError as wrapped:
+                self.assertIs(wrapped.__cause__, original)
+            else:
+                self.fail("InvalidStorageDataError не был выброшен")
 
 
 if __name__ == "__main__":

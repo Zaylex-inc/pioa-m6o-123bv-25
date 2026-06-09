@@ -200,9 +200,30 @@ class TestTableUpdate(unittest.TestCase):
         """При невалидной колонке запись не должна меняться."""
         with self.assertRaises(ColumnNotFoundError):
             self.table.update_record(1, name="Alicia", unknown="X")
-        # name НЕ должно было измениться
         rec = self.table.select_records(id=1)[0]
         self.assertEqual(rec["name"], "Alice")
+
+    def test_update_cannot_change_id(self):
+        """Поле id запрещено менять через update_record."""
+        with self.assertRaises(InvalidDataError) as ctx:
+            self.table.update_record(1, id=999)
+        self.assertIn("id", str(ctx.exception))
+
+    def test_update_id_does_not_mutate_record(self):
+        """Проверка id должна срабатывать до мутации других полей."""
+        with self.assertRaises(InvalidDataError):
+            self.table.update_record(1, id=999, name="X")
+        rec = self.table.select_records(id=1)[0]
+        self.assertEqual(rec["name"], "Alice")
+        self.assertEqual(rec["id"], 1)
+
+    def test_update_id_to_existing_id_blocked(self):
+        """Нельзя получить две записи с одинаковым id через update."""
+        with self.assertRaises(InvalidDataError):
+            self.table.update_record(1, id=2)
+        self.assertEqual(self.table.select_records(id=1)[0]["name"], "Alice")
+        self.assertEqual(self.table.select_records(id=2)[0]["name"], "Bob")
+        self.assertEqual(self.table.get_record_count(), 2)
 
 
 class TestTableDelete(unittest.TestCase):
@@ -278,7 +299,6 @@ class TestTableSort(unittest.TestCase):
         t.insert_record({"id": 2, "value": None})
         t.insert_record({"id": 3, "value": 5})
         result = t.sort_records("value")
-        # None должен оказаться в конце.
         self.assertIsNone(result[-1]["value"])
         self.assertEqual([r["value"] for r in result[:-1]], [5, 10])
 
@@ -341,6 +361,13 @@ class TestDatabase(unittest.TestCase):
         self.assertFalse(self.db.has_table("x"))
         self.db.create_table("x", ("id",))
         self.assertTrue(self.db.has_table("x"))
+
+    def test_get_corrupted_tables_always_empty(self):
+        """In-memory БД физически не может иметь повреждённых таблиц."""
+        self.assertEqual(self.db.get_corrupted_tables(), {})
+        self.db.create_table("a", ("id",))
+        self.db.create_table("b", ("id", "name"))
+        self.assertEqual(self.db.get_corrupted_tables(), {})
 
 
 class TestDatabaseDelegation(unittest.TestCase):

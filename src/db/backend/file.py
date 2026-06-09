@@ -6,7 +6,13 @@ from pathlib import Path
 from typing import Any
 
 from .database import Database
-from .errors import InvalidDataError, InvalidStorageDataError, TableNotFoundError
+from .errors import (
+    ColumnNotFoundError,
+    DuplicateIDError,
+    InvalidDataError,
+    InvalidStorageDataError,
+    TableNotFoundError,
+)
 from .table import Table
 
 
@@ -54,7 +60,13 @@ class FileDatabase(Database):
             ) from error
 
     def _delete_table_storage(self, table_name: str) -> None:
-        self._get_table_path(table_name).unlink()
+        path = self._get_table_path(table_name)
+        try:
+            path.unlink()
+        except OSError as error:
+            raise InvalidStorageDataError(
+                f"Не удалось удалить файл таблицы '{table_name}': {error}"
+            ) from error
 
     def _list_table_names(self) -> list[str]:
         return sorted(
@@ -107,11 +119,23 @@ class FileDatabase(Database):
                 )
 
         columns = tuple(data["columns"])
-        table = Table(table_name, columns)
+        try:
+            table = Table(table_name, columns)
+        except InvalidDataError as error:
+            raise InvalidStorageDataError(
+                f"Файл таблицы '{table_name}': некорректный набор колонок: {error}"
+            ) from error
+
         for record in data["records"]:
             if not isinstance(record, dict):
                 raise InvalidStorageDataError(
                     f"Файл таблицы '{table_name}': запись должна быть объектом."
                 )
-            table.insert_record(record)
+            try:
+                table.insert_record(record)
+            except (InvalidDataError, DuplicateIDError, ColumnNotFoundError) as error:
+                raise InvalidStorageDataError(
+                    f"Файл таблицы '{table_name}': некорректная запись "
+                    f"{record!r}: {error}"
+                ) from error
         return table

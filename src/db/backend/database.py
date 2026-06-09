@@ -1,5 +1,6 @@
 """Абстрактный интерфейс базы данных."""
 
+import logging
 from abc import ABC, abstractmethod
 from typing import Any
 
@@ -9,6 +10,9 @@ from .errors import (
     TableNotFoundError,
 )
 from .table import Table
+
+
+logger = logging.getLogger(__name__)
 
 
 class Database(ABC):
@@ -35,13 +39,38 @@ class Database(ABC):
         return self._load_table(table_name)
 
     def get_tables(self) -> dict[str, Table]:
+        """Вернуть все читаемые таблицы.
+
+        Повреждённые файлы пропускаются, чтобы одна битая таблица не делала
+        недоступными все остальные. Каждый пропуск логируется как warning;
+        программный список пропущенных таблиц доступен через
+        get_corrupted_tables().
+        """
         result: dict[str, Table] = {}
         for name in self._list_table_names():
             try:
                 result[name] = self._load_table(name)
-            except InvalidStorageDataError:
+            except InvalidStorageDataError as error:
+                logger.warning(
+                    "Пропущена повреждённая таблица '%s': %s", name, error
+                )
                 continue
         return result
+
+    def get_corrupted_tables(self) -> dict[str, str]:
+        """Вернуть имена повреждённых таблиц и текст ошибки для каждой.
+
+        Позволяет UI/CLI сообщить пользователю о недоступных данных вместо
+        того, чтобы молча скрывать их из get_tables(). Для реализаций без
+        внешнего хранилища (например, in-memory) всегда возвращает {}.
+        """
+        corrupted: dict[str, str] = {}
+        for name in self._list_table_names():
+            try:
+                self._load_table(name)
+            except InvalidStorageDataError as error:
+                corrupted[name] = str(error)
+        return corrupted
 
     def insert_record(
         self, table_name: str, record: dict[str, Any]

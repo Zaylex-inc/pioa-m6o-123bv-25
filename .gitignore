@@ -52,4 +52,5 @@ dmypy.json
 *.swo
 *~
 .DS_Store
-Thumbs.db/data/
+Thumbs.db
+/data/
