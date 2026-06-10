@@ -1,4 +1,7 @@
-from .backend.memory import Database, Table
+"""TUI для системы управления базой данных."""
+
+from .backend.memory import Database, MemoryDatabase
+from .backend.file import FileDatabase
 from .backend.errors import (
     DatabaseError,
     TableNotFoundError,
@@ -6,13 +9,35 @@ from .backend.errors import (
     RecordNotFoundError,
     ColumnNotFoundError,
     InvalidDataError,
+    InvalidStorageDataError,
 )
 
 
 class TUI:
-    def __init__(self):
-        self.db = Database()
+    def __init__(self, db: Database | None = None):
+        if db is None:
+            db = self._choose_backend()
+        self.db = db
         self.running = True
+
+    def _choose_backend(self) -> Database:
+        print("\n" + "=" * 50)
+        print("         ВЫБОР ТИПА БАЗЫ ДАННЫХ")
+        print("=" * 50)
+        print("1. In-memory (данные не сохраняются между запусками)")
+        print("2. File (данные сохраняются в каталог data/)")
+        print("=" * 50)
+
+        while True:
+            choice = input("Выберите тип БД (1/2): ").strip()
+            if choice == "1":
+                self._print_success("Выбрана in-memory база данных.")
+                return MemoryDatabase()
+            if choice == "2":
+                directory = input("Каталог для хранения [data]: ").strip() or "data"
+                self._print_success(f"Выбрана файловая БД (каталог: {directory}).")
+                return FileDatabase(directory)
+            self._print_error("Введите 1 или 2.")
 
     def _read_int(self, prompt: str) -> int:
         while True:
@@ -21,13 +46,6 @@ class TUI:
                 return int(raw)
             except ValueError:
                 self._print_error("Ошибка: введите целое число.")
-
-    def _read_positive_int(self, prompt: str) -> int:
-        while True:
-            value = self._read_int(prompt)
-            if value > 0:
-                return value
-            self._print_error("Ошибка: введите число больше 0.")
 
     def _try_convert(self, value: str):
         """Попытаться преобразовать строку в int, float или оставить строкой."""
@@ -85,7 +103,7 @@ class TUI:
 
             records = table.get_records()
             if records:
-                print(f"\n Пример записи:")
+                print("\n Пример записи:")
                 print(f"   {records[0]}")
         except TableNotFoundError as e:
             self._print_error(str(e))
@@ -148,6 +166,8 @@ class TUI:
             self._print_error(str(e))
         except InvalidDataError as e:
             self._print_error(str(e))
+        except InvalidStorageDataError as e:
+            self._print_error(str(e))
         except DatabaseError as e:
             self._print_error(str(e))
 
@@ -157,8 +177,6 @@ class TUI:
         table_name = input("Введите имя таблицы: ").strip()
 
         try:
-            table = self.db.get_table(table_name)
-
             use_filters = input("Добавить фильтры? (y/n): ").strip().lower()
             filters = {}
 
@@ -197,7 +215,7 @@ class TUI:
             table = self.db.get_table(table_name)
             record_id = self._read_int("Введите ID записи для обновления: ")
 
-            self._print_info(f"Введите поля для обновления (пустая строка для завершения):")
+            self._print_info("Введите поля для обновления (пустая строка для завершения):")
             updates = {}
 
             for column in table.get_columns():
@@ -231,7 +249,6 @@ class TUI:
         table_name = input("Введите имя таблицы: ").strip()
 
         try:
-            table = self.db.get_table(table_name)
             record_id = self._read_int("Введите ID записи для удаления: ")
 
             confirm = input(f"Вы уверены, что хотите удалить запись с ID {record_id}? (y/n): ").strip().lower()

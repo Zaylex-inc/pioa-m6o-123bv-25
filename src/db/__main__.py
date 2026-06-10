@@ -1,7 +1,10 @@
+"""Точка входа: python -m src.db"""
+
 from .tui import TUI
-def main():
-    app = TUI()
-    app.run()
+
+
+def main() -> None:
+    TUI().run()
 
 
 if __name__ == "__main__":

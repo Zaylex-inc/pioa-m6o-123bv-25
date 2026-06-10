@@ -34,3 +34,8 @@ class ColumnNotFoundError(DatabaseError):
 class InvalidDataError(DatabaseError):
     """Некорректные данные: тип id, структура колонок, несравнимые значения и т.п."""
     pass
+
+
+class InvalidStorageDataError(DatabaseError):
+    """Повреждённые или некорректные данные в файловом хранилище."""
+    pass
